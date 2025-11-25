@@ -6,8 +6,10 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
     double dx = lx / nx;
     double dy = ly / ny;
     int nsav = nt / isav;
+    if (nsav <= 0) nsav = 1;
 
-    // Allocations
+    // --- 1. Allocations ---
+    printf("Debug: Allocating memory...\n");
     cplx **phif = alloc_2d_cplx(ny, nx);
     cplx **nf = alloc_2d_cplx(ny, nx);
     cplx **zetaf = alloc_2d_cplx(ny, nx);
@@ -26,24 +28,40 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
     double *phihst_data = (double *)calloc(hist_size, sizeof(double));
     double *nhst_data = (double *)calloc(hist_size, sizeof(double));
     double *zetahst_data = (double *)calloc(hist_size, sizeof(double));
+    
+    if (!phif || !nf || !zetaf || !phihst_data) {
+        fprintf(stderr, "Memory allocation failed in MHW.\n");
+        return;
+    }
 
-    // Setup & Initialize
+    // --- 2. Setup & Initialize ---
+    printf("Debug: Setting up grid...\n");
     setup_grid_and_wavenumbers(nx, ny, lx, ly); 
+    
+    printf("Debug: Initializing state...\n");
     initialize_state_and_history(nx, ny, nsav, phi_init, n_init, phif, nf, zetaf, phihst_data, nhst_data, zetahst_data);
     
-    // Integrating Factor
+    // 積分因子 exp_factor の計算
     for (int j = 0; j < ny; j++) {
         for (int i = 0; i < nx; i++) {
-            double k2 = creal(KX2[j][i]) + creal(KY2[j][i]);
+            double k2 = -(creal(KX2[j][i]) + creal(KY2[j][i]));
             exp_factor[j][i] = cexp(-mu * k2 * k2 * dt);
         }
     }
 
-    printf("Starting MHW simulation...\n");
+    printf("Starting MHW simulation for %d timesteps (saved steps: %d)...\n", nt, nsav);
+    fflush(stdout); // 強制的にログを表示させる
 
-    // Time loop
+    // --- 3. Time stepping loop (4th-order Runge-Kutta) ---
     for (int it = 1; it < nt; it++) {
-        // Step 1: Integrating factor
+        
+        // ★デバッグ表示: 最初の10ステップと、以降は1000ステップごとに表示
+        if (it <= 10 || it % 1000 == 0) {
+            printf("Step %d / %d\r", it, nt); // \r で同じ行を上書き
+            fflush(stdout);
+        }
+
+        // 4a. 積分因子ステップ
         for (int j = 0; j < ny; j++) {
             for (int i = 0; i < nx; i++) {
                 zetaf[j][i] *= exp_factor[j][i];
@@ -51,9 +69,14 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
             }
         }
         
-        // Step 2: RK4
+        // 4b. 4次ルンゲ＝クッタ法
+        
+        // ★クラッシュ箇所特定のためのチェック (最初のステップのみ詳細表示)
+        if (it == 1) printf("\nDebug: Calling adv(k1)...\n");
         adv(zetaf, nf, dx, dy, alph, nu, kap, gw1, ga1);
+        if (it == 1) printf("Debug: Finished adv(k1).\n");
 
+        // k2
         for (int j = 0; j < ny; j++) {
             for (int i = 0; i < nx; i++) {
                 zetaf_temp[j][i] = zetaf[j][i] + 0.5 * dt * gw1[j][i];
@@ -62,6 +85,7 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
         }
         adv(zetaf_temp, nf_temp, dx, dy, alph, nu, kap, gw2, ga2);
 
+        // k3
         for (int j = 0; j < ny; j++) {
             for (int i = 0; i < nx; i++) {
                 zetaf_temp[j][i] = zetaf[j][i] + 0.5 * dt * gw2[j][i];
@@ -70,6 +94,7 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
         }
         adv(zetaf_temp, nf_temp, dx, dy, alph, nu, kap, gw3, ga3);
 
+        // k4
         for (int j = 0; j < ny; j++) {
             for (int i = 0; i < nx; i++) {
                 zetaf_temp[j][i] = zetaf[j][i] + dt * gw3[j][i];
@@ -78,6 +103,7 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
         }
         adv(zetaf_temp, nf_temp, dx, dy, alph, nu, kap, gw4, ga4);
 
+        // Update
         for (int j = 0; j < ny; j++) {
             for (int i = 0; i < nx; i++) {
                 zetaf[j][i] += dt / 6.0 * (gw1[j][i] + 2.0 * gw2[j][i] + 2.0 * gw3[j][i] + gw4[j][i]);
@@ -85,14 +111,20 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
             }
         }
         
-        // Save History
+        // 4c. 履歴の保存
         if (it % isav == 0) {
             int t_idx = it / isav;
-            save_current_history(t_idx, zetaf, nf, phif, phihst_data, nhst_data, zetahst_data);
-            if (t_idx % (nsav/10 + 1) == 0) printf("Timestep: %d/%d\n", it, nt);
+            if (t_idx < nsav) {
+                save_current_history(t_idx, zetaf, nf, phif, phihst_data, nhst_data, zetahst_data);
+                
+                // 進捗表示 (元のコードより頻度を上げて表示)
+                if (t_idx % (nsav/100 + 1) == 0) { // 1%ごとに表示
+                     printf("\nSaved History: %d/%d (%.1f%%)\n", it, nt, (double)it / nt * 100.0);
+                }
+            }
         }
     }
     
-    // Cleanup
+    // --- 4. Cleanup ---
     save_and_cleanup(nsav, dir, phif, nf, zetaf, gw1, ga1, gw2, ga2, gw3, ga3, gw4, ga4, zetaf_temp, nf_temp, exp_factor, phihst_data, nhst_data, zetahst_data);
 }

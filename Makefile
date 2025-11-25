@@ -2,7 +2,7 @@ NAME = MHW
 CC = cc
 CFLAGS = -Wall -Wextra -Werror -pthread
 INCLUDES = -I.
-# 重要な修正: ライブラリをリンクさせる
+# 重要: 数学ライブラリ(-lm)とFFTW(-lfftw3)をリンク
 LIBS = -lfftw3 -lm
 RM = rm -f
 

@@ -10,6 +10,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // Define complex numbers
 typedef double complex cplx;
 
@@ -19,16 +23,16 @@ extern double LX, LY;
 extern int shot_no; 
 extern cplx **KX, **KY, **KX2, **KY2, **KXD, **KYD;
 
-// --- Memory Utilities Prototypes (2d_array_custom.c) ---
+// --- Memory Utilities Prototypes (Defined in 2d_array_custom.c) ---
 double **alloc_2d_double(int rows, int cols);
 void free_2d_double(double **array);
 cplx **alloc_2d_cplx(int rows, int cols);
 void free_2d_cplx(cplx **array);
 
-// --- MHW Simulation Prototypes (MHW.c) ---
+// --- MHW Simulation Prototypes (Defined in MHW.c) ---
 void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, double alph, double mu, double nu, double **phi_init, double **n_init, int isav, const char *dir);
 
-// --- Advection & Utility Prototypes (adv.c & adv_utils.c) ---
+// --- Advection & Utility Prototypes (Defined in adv.c & adv_utils.c) ---
 void adv(cplx **zetaf, cplx **nf, double dx, double dy, double alph, double nu, double kap, cplx **advff, cplx **advgf);
 
 void calculate_phi_and_ifft(cplx **zetaf, cplx **nf, cplx **phif, double **phi, double **n, double **zeta);
@@ -45,8 +49,7 @@ void calculate_rhs_real_space(double **phi, double **n, double **zeta, double **
 void calculate_fft_rhs(double **advf, double **advg, cplx **advff, cplx **advgf);
 
 
-// --- MHW Utility Prototypes (MHW_utils.c) ---
-// Note: これら関数の実装が MHW_utils.c または adv_utils.c に存在する必要があります
+// --- MHW Utility Prototypes (Defined in MHW_utils.c) ---
 void setup_grid_and_wavenumbers(int nx, int ny, double lx, double ly);
 
 void initialize_state_and_history(int nx, int ny, int nsav, 

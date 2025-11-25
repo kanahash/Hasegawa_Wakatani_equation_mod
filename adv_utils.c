@@ -4,9 +4,7 @@
  * @brief 渦度からポテンシャルを計算し、phi, n, zetaをフーリエ空間から実空間へ変換する。
  */
 void calculate_phi_and_ifft(cplx **zetaf, cplx **nf, cplx **phif, double **phi, double **n, double **zeta) {
-    fftw_plan p_ifft_phi, p_ifft_n, p_ifft_zeta;
-
-    // 1. Calculate phi_f and its inverse
+    // 1. Calculate phi_f
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
             double k2 = creal(KX2[j][i]) + creal(KY2[j][i]);
@@ -14,29 +12,44 @@ void calculate_phi_and_ifft(cplx **zetaf, cplx **nf, cplx **phif, double **phi, 
         }
     }
     phif[0][0] = 0.0; // ゼロ平均を強制
-    
-    // IFFT Plan & Execute
-    p_ifft_phi = fftw_plan_dft_2d(NY, NX, phif[0], (fftw_complex *)phi[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_n = fftw_plan_dft_2d(NY, NX, nf[0], (fftw_complex *)n[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_zeta = fftw_plan_dft_2d(NY, NX, zetaf[0], (fftw_complex *)zeta[0], FFTW_BACKWARD, FFTW_ESTIMATE);
 
-    fftw_execute(p_ifft_phi);
-    fftw_execute(p_ifft_n);
-    fftw_execute(p_ifft_zeta);
+    // IFFT用の作業バッファ (複素数) を確保
+    cplx *tmp_out = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
+    fftw_plan p;
 
-    // Normalize IFFT results (FFTW convention)
     double norm = 1.0 / (NX * NY);
+
+    // --- Phi (Complex -> Real) ---
+    p = fftw_plan_dft_2d(NY, NX, phif[0], tmp_out, FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
-            phi[j][i] = creal(phi[j][i]) * norm; // IFFT結果は複素数バッファに入っているため実部を取得
-            n[j][i] = creal(n[j][i]) * norm;
-            zeta[j][i] = creal(zeta[j][i]) * norm;
+            phi[j][i] = creal(tmp_out[j * NX + i]) * norm;
         }
     }
+    fftw_destroy_plan(p);
 
-    fftw_destroy_plan(p_ifft_phi);
-    fftw_destroy_plan(p_ifft_n);
-    fftw_destroy_plan(p_ifft_zeta);
+    // --- N (Complex -> Real) ---
+    p = fftw_plan_dft_2d(NY, NX, nf[0], tmp_out, FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) {
+            n[j][i] = creal(tmp_out[j * NX + i]) * norm;
+        }
+    }
+    fftw_destroy_plan(p);
+
+    // --- Zeta (Complex -> Real) ---
+    p = fftw_plan_dft_2d(NY, NX, zetaf[0], tmp_out, FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) {
+            zeta[j][i] = creal(tmp_out[j * NX + i]) * norm;
+        }
+    }
+    fftw_destroy_plan(p);
+
+    fftw_free(tmp_out);
 }
 
 /**
@@ -45,6 +58,8 @@ void calculate_phi_and_ifft(cplx **zetaf, cplx **nf, cplx **phif, double **phi, 
 void calculate_zonal_averages(double **phi, double **n, double dy, double LY, double *phiz, double *nz) {
     // phiz, nz は calloc でゼロ初期化されている前提
     for (int i = 0; i < NX; i++) {
+        phiz[i] = 0.0;
+        nz[i] = 0.0;
         for (int j = 0; j < NY; j++) {
             phiz[i] += phi[j][i];
             nz[i] += n[j][i];
@@ -61,15 +76,12 @@ void calculate_zonal_averages(double **phi, double **n, double dy, double LY, do
 void calculate_filtered_derivatives(cplx **phif, cplx **zetaf, cplx **nf, 
                                     cplx **phixf, cplx **phiyf, cplx **zetaxf, cplx **zetayf, cplx **nxf, cplx **nyf,
                                     double **phix, double **phiy, double **zetax, double **zetay, double **nnx, double **nny) {
-    fftw_plan p_ifft_phix, p_ifft_phiy, p_ifft_zetax, p_ifft_zetay, p_ifft_nx, p_ifft_ny;
-    double norm = 1.0 / (NX * NY);
     
-    // 3. Calculate spatial derivatives in k-space and apply de-aliasing filter
+    // 1. Calculate spatial derivatives in k-space
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
             cplx filter = KXD[j][i] * KYD[j][i];
             
-            // k-space multiplication
             phixf[j][i] = I * KX[j][i] * phif[j][i] * filter;
             phiyf[j][i] = I * KY[j][i] * phif[j][i] * filter;
             zetaxf[j][i] = I * KX[j][i] * zetaf[j][i] * filter;
@@ -79,38 +91,27 @@ void calculate_filtered_derivatives(cplx **phif, cplx **zetaf, cplx **nf,
         }
     }
     
-    // IFFT Plan & Execute for Derivatives
-    p_ifft_phix = fftw_plan_dft_2d(NY, NX, phixf[0], (fftw_complex *)phix[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_phiy = fftw_plan_dft_2d(NY, NX, phiyf[0], (fftw_complex *)phiy[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_zetax = fftw_plan_dft_2d(NY, NX, zetaxf[0], (fftw_complex *)zetax[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_zetay = fftw_plan_dft_2d(NY, NX, zetayf[0], (fftw_complex *)zetay[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_nx = fftw_plan_dft_2d(NY, NX, nxf[0], (fftw_complex *)nnx[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    p_ifft_ny = fftw_plan_dft_2d(NY, NX, nyf[0], (fftw_complex *)nny[0], FFTW_BACKWARD, FFTW_ESTIMATE);
+    // IFFT Execution using temporary buffer
+    cplx *tmp_out = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
+    fftw_plan p;
+    double norm = 1.0 / (NX * NY);
 
-    fftw_execute(p_ifft_phix);
-    fftw_execute(p_ifft_phiy);
-    fftw_execute(p_ifft_zetax);
-    fftw_execute(p_ifft_zetay);
-    fftw_execute(p_ifft_nx);
-    fftw_execute(p_ifft_ny);
+    // Helper macro for repetitive IFFT tasks
+    #define EXECUTE_IFFT(in_cplx, out_double) \
+        p = fftw_plan_dft_2d(NY, NX, in_cplx[0], tmp_out, FFTW_BACKWARD, FFTW_ESTIMATE); \
+        fftw_execute(p); \
+        for (int j=0; j<NY; j++) for (int i=0; i<NX; i++) out_double[j][i] = creal(tmp_out[j*NX+i]) * norm; \
+        fftw_destroy_plan(p);
 
-    // Normalize IFFT results
-    for (int j = 0; j < NY; j++) {
-        for (int i = 0; i < NX; i++) {
-            phix[j][i] = creal(phix[j][i]) * norm;
-            phiy[j][i] = creal(phiy[j][i]) * norm;
-            zetax[j][i] = creal(zetax[j][i]) * norm;
-            zetay[j][i] = creal(zetay[j][i]) * norm;
-            nnx[j][i] = creal(nnx[j][i]) * norm;
-            nny[j][i] = creal(nny[j][i]) * norm;
-        }
-    }
-    fftw_destroy_plan(p_ifft_phix);
-    fftw_destroy_plan(p_ifft_phiy);
-    fftw_destroy_plan(p_ifft_zetax);
-    fftw_destroy_plan(p_ifft_zetay);
-    fftw_destroy_plan(p_ifft_nx);
-    fftw_destroy_plan(p_ifft_ny);
+    EXECUTE_IFFT(phixf, phix);
+    EXECUTE_IFFT(phiyf, phiy);
+    EXECUTE_IFFT(zetaxf, zetax);
+    EXECUTE_IFFT(zetayf, zetay);
+    EXECUTE_IFFT(nxf, nnx);
+    EXECUTE_IFFT(nyf, nny);
+
+    #undef EXECUTE_IFFT
+    fftw_free(tmp_out);
 }
 
 /**
@@ -120,62 +121,72 @@ void calculate_rhs_real_space(double **phi, double **n, double **zeta, double **
                               double **zetay, double **nnx, double **nny, double *phiz, double *nz,
                               double alph, double nu, double kap, double **advf, double **advg, cplx **phif) {
     
-    // advg の最終項 (-kap * v_x = -kap * d(phi)/d(y)) 用の処理
-    // この項だけデエイリアシングフィルターがかからないため、別途計算が必要
-    cplx **phiyf_unf = alloc_2d_cplx(NY, NX);
-    double **phiy_unf = alloc_2d_double(NY, NX);
+    // advg の最終項 (-kap * v_x = -kap * d(phi)/d(y)) 用の処理 (Unfiltered)
+    cplx *tmp_in = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
+    cplx *tmp_out = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
     
-    for (int r = 0; r < NY; r++) {
-        for (int c = 0; c < NX; c++) {
-            // Unfiltered phiyf: I * KY * phif
-            phiyf_unf[r][c] = I * KY[r][c] * phif[r][c];
-        }
-    }
-    fftw_plan p_ifft_phiy_unf = fftw_plan_dft_2d(NY, NX, phiyf_unf[0], (fftw_complex *)phiy_unf[0], FFTW_BACKWARD, FFTW_ESTIMATE);
-    fftw_execute(p_ifft_phiy_unf);
-    fftw_destroy_plan(p_ifft_phiy_unf);
-    double norm = 1.0 / (NX * NY);
-
+    // Prepare phiyf_unf in tmp_in
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
+            tmp_in[j * NX + i] = I * KY[j][i] * phif[j][i];
+        }
+    }
+
+    fftw_plan p = fftw_plan_dft_2d(NY, NX, tmp_in, tmp_out, FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
+    fftw_destroy_plan(p);
+
+    double norm = 1.0 / (NX * NY);
+    
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) {
+            double phiy_val = creal(tmp_out[j * NX + i]) * norm;
+
             double phiz_val = phiz[i];
             double nz_val = nz[i];
             
-            // Equation for zeta (advf):
-            // Non-linear: -(phix*zetay - phiy*zetax)
-            // Linear (coupling + dissipation): + alph*((phi-phiz)-(n-nz)) - nu*zeta
+            // Equation for zeta (advf)
             advf[j][i] = -(phix[j][i] * zetay[j][i] - phiy[j][i] * zetax[j][i]) 
-                         + alph * ((phi[j][i] - phiz_val) - (n[j][i] - nz_val)) 
-                         - nu * zeta[j][i];
+                       + alph * ((phi[j][i] - phiz_val) - (n[j][i] - nz_val)) 
+                       - nu * zeta[j][i];
 
-            // Equation for n (advg):
-            // Non-linear: -(phix*nny - phiy*nnx)
-            // Linear (coupling + instability): + alph*((phi-phiz)-(n-nz)) - kap * d(phi)/d(y)
+            // Equation for n (advg)
             advg[j][i] = -(phix[j][i] * nny[j][i] - phiy[j][i] * nnx[j][i])
-                         + alph * ((phi[j][i] - phiz_val) - (n[j][i] - nz_val)) 
-                         - kap * (creal(phiy_unf[j][i]) * norm); // -kap * v_x (unfiltered)
+                       + alph * ((phi[j][i] - phiz_val) - (n[j][i] - nz_val)) 
+                       - kap * phiy_val; 
         }
     }
     
-    free_2d_cplx(phiyf_unf);
-    free_2d_double(phiy_unf);
+    fftw_free(tmp_in);
+    fftw_free(tmp_out);
 }
 
 /**
  * @brief 実空間の右辺 (advf, advg) をフーリエ空間 (advff, advgf) に変換する。
  */
 void calculate_fft_rhs(double **advf, double **advg, cplx **advff, cplx **advgf) {
-    fftw_plan p_fft_advf, p_fft_advg;
+    cplx *tmp_in = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
+    fftw_plan p;
 
-    // 5. Calculate FFT of advf and advg
-    // FFTW plan: input is real, output is complex (but we pass double** as fftw_complex* for simplicity)
-    p_fft_advf = fftw_plan_dft_2d(NY, NX, (fftw_complex *)advf[0], advff[0], FFTW_FORWARD, FFTW_ESTIMATE);
-    p_fft_advg = fftw_plan_dft_2d(NY, NX, (fftw_complex *)advg[0], advgf[0], FFTW_FORWARD, FFTW_ESTIMATE);
+    // --- advf (Real -> Complex) ---
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) {
+            tmp_in[j * NX + i] = advf[j][i]; // Imaginary part is 0.0
+        }
+    }
+    p = fftw_plan_dft_2d(NY, NX, tmp_in, advff[0], FFTW_FORWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
+    fftw_destroy_plan(p);
 
-    fftw_execute(p_fft_advf);
-    fftw_execute(p_fft_advg);
-    
-    // Cleanup
-    fftw_destroy_plan(p_fft_advf);
-    fftw_destroy_plan(p_fft_advg);
+    // --- advg (Real -> Complex) ---
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) {
+            tmp_in[j * NX + i] = advg[j][i];
+        }
+    }
+    p = fftw_plan_dft_2d(NY, NX, tmp_in, advgf[0], FFTW_FORWARD, FFTW_ESTIMATE);
+    fftw_execute(p);
+    fftw_destroy_plan(p);
+
+    fftw_free(tmp_in);
 }

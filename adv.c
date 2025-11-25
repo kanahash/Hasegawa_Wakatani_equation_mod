@@ -1,13 +1,11 @@
 #include "MHW.h"
 
 void adv(cplx **zetaf, cplx **nf, double dx, double dy, double alph, double nu, double kap, cplx **advff, cplx **advgf) {
-    // --- 修正点: 未使用パラメータの抑制 ---
-    (void)dx;
-    // dyはcalculate_zonal_averagesに渡されていますが、もし渡されていない場合も考慮し、
-    // ここではインターフェースを残すため抑制を追加します。
-    // (void)dy; 
+    // 未使用パラメータの抑制
+    (void)dx; 
+    // dyはcalculate_zonal_averagesで使用
 
-    // テンポラリ配列の確保 
+    // テンポラリ配列の確保 (double型)
     cplx **phif = alloc_2d_cplx(NY, NX);
     double **phi = alloc_2d_double(NY, NX);
     double **n = alloc_2d_double(NY, NX);

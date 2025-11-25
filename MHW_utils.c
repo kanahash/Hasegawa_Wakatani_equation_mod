@@ -6,27 +6,21 @@ double LX, LY;
 int shot_no = 13; 
 cplx **KX, **KY, **KX2, **KY2, **KXD, **KYD;
 
-// --- Helper Functions for FFT (Internal use) ---
-// Note: 2d_array_custom.c の関数を使用
-// MHW.h でプロトタイプ宣言されている前提
-
-// --- Implementation of Missing Functions ---
+// --- Implementation of Helper Functions ---
 
 /**
  * @brief 波数空間のグリッドを設定する (FFTWの順序に従う)
  */
 void setup_grid_and_wavenumbers(int nx, int ny, double lx, double ly) {
-    // グローバル変数のメモリ確保
+    // グローバル変数にメモリを割り当て
     KX = alloc_2d_cplx(ny, nx);
     KY = alloc_2d_cplx(ny, nx);
     KX2 = alloc_2d_cplx(ny, nx);
     KY2 = alloc_2d_cplx(ny, nx);
-    // 必要に応じて KXD, KYD もここで確保（デエイリアシング用など）
-    // 今回は単純なシミュレーション用として基本波数のみ設定
 
     double kx_val, ky_val;
     for (int j = 0; j < ny; j++) {
-        // FFTWの周波数順序: 0, 1, ..., N/2-1, -N/2, ..., -1
+        // FFTW frequency ordering: 0, 1, ..., N/2-1, -N/2, ..., -1
         int m = (j <= ny / 2) ? j : j - ny;
         ky_val = 2.0 * M_PI * m / ly;
 
@@ -37,28 +31,30 @@ void setup_grid_and_wavenumbers(int nx, int ny, double lx, double ly) {
             KX[j][i] = kx_val;
             KY[j][i] = ky_val;
             
-            // ラプラシアン用 (-k^2)
-            KX2[j][i] = -kx_val * kx_val;
-            KY2[j][i] = -ky_val * ky_val;
+            // Laplacian (-k^2)
+            KX2[j][i] = -(kx_val * kx_val);
+            KY2[j][i] = -(ky_val * ky_val);
         }
     }
 }
 
 /**
- * @brief 初期状態をフーリエ変換して設定し、t=0の履歴を保存する
+ * @brief 初期状態をFFTし、渦度(Zeta)を計算し、t=0の履歴を保存する
  */
 void initialize_state_and_history(int nx, int ny, int nsav, 
                                   double **phi_init, double **n_init, 
                                   cplx **phif, cplx **nf, cplx **zetaf, 
                                   double *phihst_data, double *nhst_data, double *zetahst_data) {
-    (void)nsav; // unused warning suppression if needed
+    (void)nsav; // suppress unused warning
 
-    // 1. Double (Real) -> Complex 変換のためのバッファ
+    // バッファ確保
     cplx *in_buf = (cplx *)fftw_malloc(sizeof(cplx) * nx * ny);
     cplx *out_buf = (cplx *)fftw_malloc(sizeof(cplx) * nx * ny);
+    
+    // FFTプラン作成
     fftw_plan p = fftw_plan_dft_2d(ny, nx, in_buf, out_buf, FFTW_FORWARD, FFTW_ESTIMATE);
 
-    // --- Phi の変換 ---
+    // --- Phi (Real to Complex) ---
     for (int j = 0; j < ny; j++) {
         for (int i = 0; i < nx; i++) {
             in_buf[j * nx + i] = phi_init[j][i];
@@ -71,7 +67,7 @@ void initialize_state_and_history(int nx, int ny, int nsav,
         }
     }
 
-    // --- N の変換 ---
+    // --- N (Real to Complex) ---
     for (int j = 0; j < ny; j++) {
         for (int i = 0; i < nx; i++) {
             in_buf[j * nx + i] = n_init[j][i];
@@ -84,39 +80,37 @@ void initialize_state_and_history(int nx, int ny, int nsav,
         }
     }
 
-    // --- Zeta (Vorticity) の計算: zeta_k = -k^2 * phi_k ---
+    // --- Zeta Calculation: zeta_k = -k^2 * phi_k ---
     for (int j = 0; j < ny; j++) {
         for (int i = 0; i < nx; i++) {
-            double k2 = -(creal(KX2[j][i]) + creal(KY2[j][i])); // k^2
-            // Laplacian operation in spectral space: -k^2
-            zetaf[j][i] = -k2 * phif[j][i];
+            // Laplacian in spectral is multiplication by -k^2.
+            // KX2 and KY2 already store -kx^2 and -ky^2, so we add them directly.
+            double laplacian_k = creal(KX2[j][i]) + creal(KY2[j][i]);
+            zetaf[j][i] = laplacian_k * phif[j][i];
         }
     }
 
-    // クリーンアップ
     fftw_destroy_plan(p);
     fftw_free(in_buf);
     fftw_free(out_buf);
 
-    // t=0 の履歴保存 (t_idx = 0)
+    // Save t=0
     save_current_history(0, zetaf, nf, phif, phihst_data, nhst_data, zetahst_data);
 }
 
-
 /**
- * @brief 現在のステップのデータを実空間に戻して履歴配列に保存する
+ * @brief 現在のステップの状態を履歴配列に保存する (逆FFT含む)
  */
 void save_current_history(int t_idx, cplx **zetaf, cplx **nf, cplx **phif, 
                           double *phihst_data, double *nhst_data, double *zetahst_data) {
     
-    // 逆変換用のプランとバッファ
     cplx *in_buf = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
     cplx *out_buf = (cplx *)fftw_malloc(sizeof(cplx) * NX * NY);
     fftw_plan p = fftw_plan_dft_2d(NY, NX, in_buf, out_buf, FFTW_BACKWARD, FFTW_ESTIMATE);
 
     size_t offset = (size_t)t_idx * NX * NY;
 
-    // --- Phi 保存 ---
+    // --- Phi ---
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
             in_buf[j * NX + i] = phif[j][i];
@@ -125,13 +119,11 @@ void save_current_history(int t_idx, cplx **zetaf, cplx **nf, cplx **phif,
     fftw_execute(p);
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
-            phihst_data[offset + j * NX + i] = creal(out_buf[j * NX + i]); 
-            // FFTW Backwardは非正規化なので、Initializeで割っていればここはそのまま、
-            // もしくは往復でサイズ倍になるのを考慮。ここではInitializeで割っているのでOKと仮定。
+            phihst_data[offset + j * NX + i] = creal(out_buf[j * NX + i]);
         }
     }
 
-    // --- N 保存 ---
+    // --- N ---
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
             in_buf[j * NX + i] = nf[j][i];
@@ -144,7 +136,7 @@ void save_current_history(int t_idx, cplx **zetaf, cplx **nf, cplx **phif,
         }
     }
 
-    // --- Zeta 保存 ---
+    // --- Zeta ---
     for (int j = 0; j < NY; j++) {
         for (int i = 0; i < NX; i++) {
             in_buf[j * NX + i] = zetaf[j][i];
@@ -162,7 +154,7 @@ void save_current_history(int t_idx, cplx **zetaf, cplx **nf, cplx **phif,
     fftw_free(out_buf);
 }
 
-// --- Save and Cleanup (Previous Implementation) ---
+// --- Save and Cleanup ---
 
 void save_and_cleanup(int nsav, const char *dir,
                       cplx **phif, cplx **nf, cplx **zetaf,
@@ -174,17 +166,17 @@ void save_and_cleanup(int nsav, const char *dir,
     char filepath[256];
     FILE *fp;
 
-    // ディレクトリが存在するか確認 (簡易的)
+    // ディレクトリ作成 (Linux/Unix)
     struct stat st = {0};
     if (stat(dir, &st) == -1) {
         #ifdef __linux__
         mkdir(dir, 0700);
         #else
-        _mkdir(dir); // Windows environment
+        _mkdir(dir);
         #endif
     }
 
-    // Phi History の保存
+    // --- Phi 保存 ---
     snprintf(filepath, sizeof(filepath), "%s/phi_history.dat", dir);
     fp = fopen(filepath, "wb");
     if (fp) {
@@ -195,8 +187,8 @@ void save_and_cleanup(int nsav, const char *dir,
     } else {
         fprintf(stderr, "Error: Could not open file %s for writing.\n", filepath);
     }
-    
-    // N History の保存
+
+    // --- N 保存 ---
     snprintf(filepath, sizeof(filepath), "%s/n_history.dat", dir);
     fp = fopen(filepath, "wb");
     if (fp) {
@@ -206,7 +198,7 @@ void save_and_cleanup(int nsav, const char *dir,
         printf("Saved: %s\n", filepath);
     }
 
-    // Zeta History の保存
+    // --- Zeta 保存 ---
     snprintf(filepath, sizeof(filepath), "%s/zeta_history.dat", dir);
     fp = fopen(filepath, "wb");
     if (fp) {
