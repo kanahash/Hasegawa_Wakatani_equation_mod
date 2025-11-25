@@ -2,6 +2,8 @@ NAME = MHW
 CC = cc
 CFLAGS = -Wall -Wextra -Werror -pthread
 INCLUDES = -I.
+# 重要な修正: ライブラリをリンクさせる
+LIBS = -lfftw3 -lm
 RM = rm -f
 
 SRCS = 2d_array_custom.c adv_utils.c adv.c main.c MHW_utils.c MHW.c
@@ -11,16 +13,16 @@ OBJS = $(SRCS:.c=.o)
 all: $(NAME)
 
 $(NAME): $(OBJS)
-		$(CC) $(CFLAGS) $(OBJS) $(INXLUDES) -o $@
+	$(CC) $(CFLAGS) $(OBJS) $(INCLUDES) -o $@ $(LIBS)
 
 %.o: %.c
-		$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-		$(RM) $(OBJS)
+	$(RM) $(OBJS)
 
-fclean:	clean
-		$(RM) $(NAME)
+fclean: clean
+	$(RM) $(NAME)
 
 re: fclean all
 
