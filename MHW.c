@@ -55,9 +55,9 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
     // --- 3. Time stepping loop (4th-order Runge-Kutta) ---
     for (int it = 1; it < nt; it++) {
         
-        // ★デバッグ表示: 最初の10ステップと、以降は1000ステップごとに表示
+        // ★デバッグ表示
         if (it <= 10 || it % 1000 == 0) {
-            printf("Step %d / %d\r", it, nt); // \r で同じ行を上書き
+            printf("Step %d / %d\r", it, nt);
             fflush(stdout);
         }
 
@@ -70,11 +70,7 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
         }
         
         // 4b. 4次ルンゲ＝クッタ法
-        
-        // ★クラッシュ箇所特定のためのチェック (最初のステップのみ詳細表示)
-        if (it == 1) printf("\nDebug: Calling adv(k1)...\n");
         adv(zetaf, nf, dx, dy, alph, nu, kap, gw1, ga1);
-        if (it == 1) printf("Debug: Finished adv(k1).\n");
 
         // k2
         for (int j = 0; j < ny; j++) {
@@ -110,16 +106,49 @@ void MHW(int nx, int ny, double lx, double ly, int nt, double dt, double kap, do
                 nf[j][i] += dt / 6.0 * (ga1[j][i] + 2.0 * ga2[j][i] + 2.0 * ga3[j][i] + ga4[j][i]);
             }
         }
+
+        // ================================================================
+        // [追加] 解析用バイナリデータ保存 (100ステップごと)
+        // ================================================================
+        if (it % 100 == 0) {
+            // 保存前にポテンシャル phif を最新の zetaf から計算する
+            // phi_k = -zeta_k / k^2
+            for(int j = 0; j < ny; j++) {
+                for(int i = 0; i < nx; i++) {
+                    double k2 = -(creal(KX2[j][i]) + creal(KY2[j][i]));
+                    if (k2 > 1.0e-12) {
+                        phif[j][i] = -zetaf[j][i] / k2;
+                    } else {
+                        phif[j][i] = 0.0 + 0.0 * I;
+                    }
+                }
+            }
+
+            char bin_filename[256];
+            sprintf(bin_filename, "%s/step_%06d.bin", dir, it);
+            FILE *fp_bin = fopen(bin_filename, "wb");
+            if (fp_bin) {
+                // 行ごとに書き込む (nf[j] は nx個のcplx配列へのポインタ)
+                for (int j = 0; j < ny; j++) {
+                    fwrite(nf[j], sizeof(cplx), nx, fp_bin);
+                }
+                for (int j = 0; j < ny; j++) {
+                    fwrite(phif[j], sizeof(cplx), nx, fp_bin);
+                }
+                fclose(fp_bin);
+            }
+        }
+        // ================================================================
         
-        // 4c. 履歴の保存
+        // 4c. 履歴の保存 (メモリ上)
         if (it % isav == 0) {
             int t_idx = it / isav;
             if (t_idx < nsav) {
                 save_current_history(t_idx, zetaf, nf, phif, phihst_data, nhst_data, zetahst_data);
                 
-                // 進捗表示 (元のコードより頻度を上げて表示)
-                if (t_idx % (nsav/100 + 1) == 0) { // 1%ごとに表示
-                     printf("\nSaved History: %d/%d (%.1f%%)\n", it, nt, (double)it / nt * 100.0);
+                // 進捗表示
+                if (t_idx % (nsav/100 + 1) == 0) { 
+                      printf("\nSaved History: %d/%d (%.1f%%)\n", it, nt, (double)it / nt * 100.0);
                 }
             }
         }

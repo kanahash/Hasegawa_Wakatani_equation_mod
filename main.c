@@ -1,61 +1,59 @@
 #include "MHW.h"
 
+// --- シミュレーション設定 ---
+#define NX 256
+#define NY 256
+#define LX 50.0
+#define LY 50.0
+#define DT 0.005
+#define NT 4000
+#define KAP 1.0
+#define ALPH 1.0
+#define MU 0.01
+#define NU 0.01
+
+// 修正箇所: 引数を (void) に変更して警告を回避
 int main(void) {
-    // 1. 保存用ディレクトリの作成
+    // 1. 初期条件用メモリ確保 (MHW.h の関数を使用)
+    // 行: nx, 列: ny
+    double **phi_init = alloc_2d_double(NX, NY);
+    double **n_init = alloc_2d_double(NX, NY);
+
+    // 2. 初期条件の設定
+    // ここではゼロ初期化（MHW内部で微小ノイズが加わる想定）
+    for(int i = 0; i < NX; i++){
+        for(int j = 0; j < NY; j++){
+            phi_init[i][j] = 0.0;
+            n_init[i][j] = 0.0;
+        }
+    }
+
+    // 3. データ保存ディレクトリ
+    const char *data_dir = "data";
+    
+    // ディレクトリ作成
     struct stat st = {0};
-    if (stat("data", &st) == -1) {
+    if (stat(data_dir, &st) == -1) {
+        // Windows/Linux 両対応のため #ifdef を入れるのが一般的ですが、
+        // 以前のコードに合わせて単純な mkdir にしています
         #ifdef _WIN32
-            _mkdir("data");
+            _mkdir(data_dir);
         #else
-            mkdir("data", 0777);
+            mkdir(data_dir, 0777);
         #endif
     }
-
-    // 2. メモリ確保 & FFTWプラン作成 (元のコードの初期化処理)
-    // ※ 変数名は元のコードに合わせてください
-    int complex_size = NX * (NY/2 + 1);
-    cp_n   = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
-    cp_phi = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
-    cp_vor = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
     
-    c_rhs_n   = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
-    c_rhs_vor = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
+    printf("Starting MHW simulation...\n");
+    printf("NX=%d, NY=%d, NT=%d\n", NX, NY, NT);
 
-    // プラン作成や他の配列確保が元のコードにあればここに記述
-    // 例: plan_n = fftw_plan_dft_r2c_2d(...)
-    
-    // 3. 初期条件の設定
-    init_data(); // 元のコードにある初期化関数
+    // 4. メイン関数の呼び出し
+    MHW(NX, NY, LX, LY, NT, DT, KAP, ALPH, MU, NU, phi_init, n_init, 100, data_dir);
 
-    // 4. パラメータの保存
-    save_params();
+    // 5. 終了処理
+    free_2d_double(phi_init);
+    free_2d_double(n_init);
 
-    printf("Simulation Started. Data will be saved to 'data/' directory.\n");
+    printf("Simulation completed.\n");
 
-    // 5. 時間発展ループ
-    for (int it = 0; it <= NT; it++) {
-        
-        // --- データの保存 ---
-        if (it % N_SAVE == 0) {
-            save_data_binary(it);
-            printf("Step %d / %d completed.\n", it, NT);
-        }
-
-        // --- RK4 時間積分 ---
-        // 元のコードでステップを進める関数を呼ぶ
-        // 例: time_step_rk4(); 
-        // または、ループ内にRK4の処理が直書きされている場合はそれをここに置く
-        time_step_rk4(); 
-    }
-
-    // 6. 終了処理 (メモリ解放)
-    fftw_free(cp_n);
-    fftw_free(cp_phi);
-    fftw_free(cp_vor);
-    fftw_free(c_rhs_n);
-    fftw_free(c_rhs_vor);
-    // fftw_destroy_plan(...) もあれば追加
-
-    printf("Simulation Finished.\n");
     return 0;
 }
