@@ -1,61 +1,61 @@
 #include "MHW.h"
 
-int main(int argc, char *argv[]) {
-    // --- 修正点: 未使用パラメータの抑制 ---
-    (void)argc;
-    (void)argv;
-    
-    // Simulation parameters
-    const int nx = 256;
-    const int ny = 256;
-    const int nt = 200000;
-    const int isav = 25;
-    const double kap = 1.0;
-    const double alph = 1.0;
-    const double nu = 0.22;
-    const double mu = 1e-4;
-    const double dt = 1e-2;
-    const double lx = 10.0 * M_PI;
-    const double ly = 32.0 * M_PI;
-    const int shot_no = 13;
-    char dir[128];
-    sprintf(dir, "data%d/", shot_no); // Directory path
-
-    // Grid setup
-    double dx = lx / nx;
-    double dy = ly / ny;
-    double *x = (double *)malloc(nx * sizeof(double));
-    double *y = (double *)malloc(ny * sizeof(double));
-    for (int i = 0; i < nx; i++) x[i] = i * dx;
-    for (int j = 0; j < ny; j++) y[j] = j * dy;
-
-    // Initial conditions
-    double **n_init = alloc_2d_double(ny, nx);
-    double **phi_init = alloc_2d_double(ny, nx);
-    const double s = 2.0;
-    const double s2 = s * s;
-    const double lx_half = lx / 2.0;
-    const double ly_half = ly / 2.0;
-    
-    for (int j = 0; j < ny; j++) {
-        for (int i = 0; i < nx; i++) {
-            double r1 = pow(x[i] - lx_half, 2) + pow(y[j] - ly_half, 2);
-            n_init[j][i] = 0.1 * exp(-r1 / s2);
-            phi_init[j][i] = n_init[j][i];
-        }
+int main(void) {
+    // 1. 保存用ディレクトリの作成
+    struct stat st = {0};
+    if (stat("data", &st) == -1) {
+        #ifdef _WIN32
+            _mkdir("data");
+        #else
+            mkdir("data", 0777);
+        #endif
     }
 
-    // Run the simulation
-    MHW(nx, ny, lx, ly, nt, dt, kap, alph, mu, nu, phi_init, n_init, isav, dir);
-
-    // Cleanup
-    free(x);
-    free(y);
-    free_2d_double(n_init);
-    free_2d_double(phi_init);
+    // 2. メモリ確保 & FFTWプラン作成 (元のコードの初期化処理)
+    // ※ 変数名は元のコードに合わせてください
+    int complex_size = NX * (NY/2 + 1);
+    cp_n   = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
+    cp_phi = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
+    cp_vor = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
     
-    // Cleanup for FFTW (not strictly required here but good practice)
-    fftw_cleanup(); 
+    c_rhs_n   = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
+    c_rhs_vor = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * complex_size);
 
+    // プラン作成や他の配列確保が元のコードにあればここに記述
+    // 例: plan_n = fftw_plan_dft_r2c_2d(...)
+    
+    // 3. 初期条件の設定
+    init_data(); // 元のコードにある初期化関数
+
+    // 4. パラメータの保存
+    save_params();
+
+    printf("Simulation Started. Data will be saved to 'data/' directory.\n");
+
+    // 5. 時間発展ループ
+    for (int it = 0; it <= NT; it++) {
+        
+        // --- データの保存 ---
+        if (it % N_SAVE == 0) {
+            save_data_binary(it);
+            printf("Step %d / %d completed.\n", it, NT);
+        }
+
+        // --- RK4 時間積分 ---
+        // 元のコードでステップを進める関数を呼ぶ
+        // 例: time_step_rk4(); 
+        // または、ループ内にRK4の処理が直書きされている場合はそれをここに置く
+        time_step_rk4(); 
+    }
+
+    // 6. 終了処理 (メモリ解放)
+    fftw_free(cp_n);
+    fftw_free(cp_phi);
+    fftw_free(cp_vor);
+    fftw_free(c_rhs_n);
+    fftw_free(c_rhs_vor);
+    // fftw_destroy_plan(...) もあれば追加
+
+    printf("Simulation Finished.\n");
     return 0;
 }
